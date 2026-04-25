@@ -24,7 +24,7 @@ public class method_overloading {
         arr[0] = 98;
     }
     public static void main(String[] args) {
-        //tellJoke();
+        tellJoke();
         int [] marks = {52, 45, 78, 32, 56, 73};
         int x = 45;
         // change(x);

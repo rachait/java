@@ -27,6 +27,7 @@ Write-Host "Waiting for file changes... Press Ctrl+C to stop."
 
 $script:pendingChange = $false
 $script:lastChangeTime = Get-Date
+$script:lastSnapshot = ""
 
 function Push-IfNeeded {
     param(
@@ -54,32 +55,29 @@ function Push-IfNeeded {
     Write-Host "Sync complete at $timestamp"
 }
 
-$watcher = New-Object System.IO.FileSystemWatcher
-$watcher.Path = $resolvedRepoPath
-$watcher.Filter = "*"
-$watcher.IncludeSubdirectories = $true
-$watcher.NotifyFilter = [System.IO.NotifyFilters]::FileName -bor [System.IO.NotifyFilters]::DirectoryName -bor [System.IO.NotifyFilters]::LastWrite
-$watcher.EnableRaisingEvents = $true
-
-$onChange = {
-    if ($Event.SourceEventArgs.FullPath -match "\\\\.git(\\\\|$)") {
-        return
-    }
-
-    $script:pendingChange = $true
-    $script:lastChangeTime = Get-Date
-}
-
-$changedEvent = Register-ObjectEvent -InputObject $watcher -EventName Changed -Action $onChange
-$createdEvent = Register-ObjectEvent -InputObject $watcher -EventName Created -Action $onChange
-$deletedEvent = Register-ObjectEvent -InputObject $watcher -EventName Deleted -Action $onChange
-$renamedEvent = Register-ObjectEvent -InputObject $watcher -EventName Renamed -Action $onChange
-
 try {
     while ($true) {
         Start-Sleep -Seconds $PollSeconds
 
+        $changes = git -C $resolvedRepoPath status --porcelain
+        if (-not $changes) {
+            $script:pendingChange = $false
+            $script:lastSnapshot = ""
+            continue
+        }
+
+        $snapshot = ($changes | Out-String).Trim()
+
+        if ($snapshot -ne $script:lastSnapshot) {
+            $script:pendingChange = $true
+            $script:lastSnapshot = $snapshot
+            $script:lastChangeTime = Get-Date
+            continue
+        }
+
         if (-not $script:pendingChange) {
+            $script:pendingChange = $true
+            $script:lastChangeTime = Get-Date
             continue
         }
 
@@ -89,6 +87,7 @@ try {
         }
 
         $script:pendingChange = $false
+        $script:lastSnapshot = ""
 
         try {
             Push-IfNeeded -Path $resolvedRepoPath -RemoteName $Remote -BranchName $Branch
@@ -99,10 +98,5 @@ try {
     }
 }
 finally {
-    Unregister-Event -SourceIdentifier $changedEvent.Name -ErrorAction SilentlyContinue
-    Unregister-Event -SourceIdentifier $createdEvent.Name -ErrorAction SilentlyContinue
-    Unregister-Event -SourceIdentifier $deletedEvent.Name -ErrorAction SilentlyContinue
-    Unregister-Event -SourceIdentifier $renamedEvent.Name -ErrorAction SilentlyContinue
-
-    $watcher.Dispose()
+    Write-Host "Auto-sync stopped."
 }
